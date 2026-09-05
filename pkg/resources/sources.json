@@ -1,0 +1,5 @@
+{
+  "catalog": "https://raw.githubusercontent.com/carjam120443-netizen/Android-tux-terminal/main/pkg/resources/packages.json",
+  "transport": "https",
+  "description": "Android Tux Terminal package catalog. Add entries with name, description, url, and optional sha256 fields."
+}
