@@ -36,12 +36,13 @@ jobs:
         run: yes | sdkmanager --licenses >/dev/null || true
 
       - name: Install Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
       - name: Verify toolchain
         run: |
           java -version
           gradle --version
+          $ANDROID_HOME/cmake/3.22.1/bin/cmake --version
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
