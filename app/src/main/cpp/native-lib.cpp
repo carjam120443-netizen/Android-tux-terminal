@@ -25,9 +25,15 @@ Java_com_carson_androidtuxterminal_NativePty_nativeStart(JNIEnv* env, jobject, j
     pid_t pid = forkpty(&master, nullptr, nullptr, &ws);
     if (pid < 0) { env->ReleaseStringUTFChars(cwd, cwdChars); return 0; }
     if (pid == 0) {
+        // Configure the interactive shell before exec(). Do not send these
+        // settings through the PTY: the PTY's normal input echo would make
+        // them appear as mangled terminal output in the Java renderer.
         setenv("TERM", "xterm-256color", 1);
         setenv("COLORTERM", "truecolor", 1);
         setenv("ANDROID_TUX_TERMINAL", "1", 1);
+        setenv("PS1", "__TUX_PROMPT__", 1);
+        setenv("PS2", "__TUX_PROMPT2__", 1);
+        setenv("PWD", cwdChars, 1);
         chdir(cwdChars);
         execl("/system/bin/sh", "sh", nullptr);
         _exit(127);
