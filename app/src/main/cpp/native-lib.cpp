@@ -7,6 +7,8 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 
 struct PtySession { int master; pid_t pid; };
 
@@ -25,9 +27,9 @@ Java_com_carson_androidtuxterminal_NativePty_nativeStart(JNIEnv* env, jobject, j
     pid_t pid = forkpty(&master, nullptr, nullptr, &ws);
     if (pid < 0) { env->ReleaseStringUTFChars(cwd, cwdChars); return 0; }
     if (pid == 0) {
-        // Configure the interactive shell before exec(). Do not send these
-        // settings through the PTY: the PTY's normal input echo would make
-        // them appear as mangled terminal output in the Java renderer.
+        // Configure the interactive shell before exec(). These settings must
+        // not be sent through the PTY because terminal input echo would echo
+        // the setup command into the UI and corrupt the prompt display.
         setenv("TERM", "xterm-256color", 1);
         setenv("COLORTERM", "truecolor", 1);
         setenv("ANDROID_TUX_TERMINAL", "1", 1);
@@ -63,6 +65,17 @@ Java_com_carson_androidtuxterminal_NativePty_nativeWrite(JNIEnv* env, jobject, j
     const jsize length = env->GetArrayLength(data);
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
     if (!bytes) return -1;
+
+    // Older Java-side startup code still sends this initialization command.
+    // The PTY is now initialized natively, so swallow the legacy command
+    // rather than letting the interactive shell echo it into the terminal.
+    static const char* legacyInit = "export TERM=xterm-256color; export COLORTERM=truecolor; PS1='__TUX_PROMPT__'; PS2='__TUX_PROMPT2__'\n";
+    const size_t legacyLength = strlen(legacyInit);
+    if (static_cast<size_t>(length) == legacyLength && memcmp(bytes, legacyInit, legacyLength) == 0) {
+        env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+        return length;
+    }
+
     ssize_t written = 0;
     while (written < length) {
         ssize_t n = write(s->master, bytes + written, length - written);
