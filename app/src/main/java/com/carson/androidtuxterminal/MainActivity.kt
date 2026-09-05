@@ -40,7 +40,7 @@ class MainActivity : AppCompatActivity() {
     private var shellWriter: OutputStreamWriter? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val shellLock = Any()
-    private val shellMarker = "__ANDROID_TUX_TERMINAL_COMMAND_DONE__"
+    private val shellMarker = "__ANDROID_TUX_TERMINAL_COMMAND_DONE__:"
 
     private val pkgCatalogUrl =
         "https://raw.githubusercontent.com/carjam120443-netizen/Android-tux-terminal/main/pkg/resources/packages.json"
@@ -123,18 +123,31 @@ class MainActivity : AppCompatActivity() {
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                 while (true) {
                     val line = reader.readLine() ?: break
-                    if (line == shellMarker) continue
-                    appendAnimated(line + "\n")
+                    if (line.startsWith(shellMarker)) {
+                        val newPath = line.removePrefix(shellMarker)
+                        if (newPath.startsWith("/")) {
+                            runOnUiThread {
+                                cwd = newPath
+                                updatePrompt()
+                            }
+                        }
+                    } else {
+                        appendAnimated(line + "\n")
+                    }
                 }
 
                 synchronized(shellLock) {
-                    shellProcess = null
-                    shellWriter = null
+                    if (shellProcess === process) {
+                        shellProcess = null
+                        shellWriter = null
+                    }
                 }
-                runOnUiThread { append("\nAndroid shell process ended. Restarting shell...\n") }
-                if (!isFinishing) startShell()
+                if (!isFinishing) {
+                    runOnUiThread { append("\nAndroid shell process ended. Restarting shell...\n") }
+                    startShell()
+                }
             } catch (e: Exception) {
-                runOnUiThread { append("Shell error: ${e.message}\n") }
+                if (!isFinishing) runOnUiThread { append("Shell error: ${e.message}\n") }
             }
         }.start()
     }
@@ -148,35 +161,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun sendToShell(command: String, callback: ((String) -> Unit)? = null) {
-        Thread {
-            try {
-                val writer = synchronized(shellLock) { shellWriter }
-                    ?: throw IllegalStateException("shell is not ready")
-                val captured = StringBuilder()
-                synchronized(shellLock) {
-                    writer.write(command)
-                    writer.write("\nprintf '%s\\n' '$shellMarker'\n")
-                    writer.flush()
-                }
-
-                val result = waitForMarker(captured)
-                runOnUiThread {
-                    if (callback != null) callback(result) else appendAnimated(result)
-                }
-            } catch (e: Exception) {
-                runOnUiThread { append("Error: ${e.message}\n") }
-            }
-        }.start()
-    }
-
-    private fun waitForMarker(captured: StringBuilder): String {
-        // The persistent reader appends terminal output asynchronously. Commands that
-        // need a result use a shell-side marker and a temporary polling buffer below.
-        // This method is replaced by executeShell's synchronized command queue.
-        return captured.toString()
-    }
-
     private fun runCommand(command: String) {
         val cmd = command.trim()
         if (cmd.isEmpty()) return
@@ -188,9 +172,10 @@ class MainActivity : AppCompatActivity() {
             cmd == "help" -> append(pkgHelp() + "\nOther commands are executed by the persistent Android /system/bin/sh session.\n")
             cmd == "clear" -> output.text = ""
             cmd == "history" -> append(history.mapIndexed { i, value -> "${i + 1}  $value\n" }.joinToString())
-            cmd == "pwd" -> append("$cwd\n")
+            cmd == "pwd" -> executeShell("pwd")
             cmd == "exit" -> append("Android Tux Terminal: exit is disabled in the app shell.\n")
-            cmd == "cd" || cmd.startsWith("cd ") -> changeDirectory(cmd.removePrefix("cd").trim())
+            cmd == "cd" -> executeShell("cd / && pwd")
+            cmd.startsWith("cd ") -> executeShell(cmd)
             cmd == "pkg" || cmd == "pkg help" -> append(pkgHelp())
             cmd == "pkg sources" -> append("Package catalog:\n$pkgCatalogUrl\n\nSources: direct HTTPS APK, GitHub Releases, and F-Droid.\n")
             cmd == "pkg update" || cmd == "pkg list" -> fetchCatalog(cmd == "pkg list")
@@ -511,44 +496,37 @@ class MainActivity : AppCompatActivity() {
                 "  Installer: Android system Package Installer\n")
     }
 
-    private fun changeDirectory(target: String) {
-        val destination = if (target.isBlank() || target == "~") "/" else target
-        executeShell("cd ${shellQuote(destination)}") { result ->
-            if (result.isBlank()) {
-                cwd = destination
-                updatePrompt()
-            }
-        }
-    }
-
-    private fun executeShell(command: String, callback: ((String) -> Unit)? = null) {
+    private fun executeShell(command: String) {
         Thread {
             try {
                 val writer = synchronized(shellLock) { shellWriter }
                     ?: throw IllegalStateException("shell is not ready yet")
-                val escapedCommand = command.replace("'", "'\\''")
                 synchronized(shellLock) {
-                    writer.write("$command\n")
-                    writer.write("printf '%s\\n' '$shellMarker'\n")
+                    writer.write(command)
+                    writer.write("\nprintf '%s%s\\n' '$shellMarker' \"\$PWD\"\n")
                     writer.flush()
                 }
-                // The persistent shell owns cwd/environment now. Keep the UI prompt in sync
-                // for normal cd commands while preserving arbitrary shell commands.
-                if (command.trim().startsWith("cd ")) {
-                    val destination = command.trim().removePrefix("cd ").trim()
-                    runOnUiThread {
-                        cwd = destination.removeSurrounding("'")
-                        updatePrompt()
-                    }
-                }
-                if (callback != null) runOnUiThread { callback("") }
             } catch (e: Exception) {
                 runOnUiThread { append("Error: ${e.message}\n") }
             }
         }.start()
     }
 
-    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+    private fun showPreviousCommand() {
+        if (history.isEmpty()) return
+        historyIndex = (historyIndex - 1).coerceAtLeast(0)
+        input.setText(history[historyIndex])
+        input.setSelection(input.text.length)
+    }
+
+    private fun showNextCommand() {
+        if (history.isEmpty()) return
+        historyIndex = (historyIndex + 1).coerceAtMost(history.size)
+        input.setText(if (historyIndex == history.size) "" else history[historyIndex])
+        input.setSelection(input.text.length)
+    }
+
+    private fun updatePrompt() { input.hint = "$cwd $ " }
 
     private fun appendAnimated(text: String) {
         if (text.isEmpty()) return
@@ -572,24 +550,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showPreviousCommand() {
-        if (history.isEmpty()) return
-        historyIndex = (historyIndex - 1).coerceAtLeast(0)
-        input.setText(history[historyIndex])
-        input.setSelection(input.text.length)
-    }
-
-    private fun showNextCommand() {
-        if (history.isEmpty()) return
-        historyIndex = (historyIndex + 1).coerceAtMost(history.size)
-        input.setText(if (historyIndex == history.size) "" else history[historyIndex])
-        input.setSelection(input.text.length)
-    }
-
-    private fun updatePrompt() { input.hint = "$cwd $ " }
-
     private fun append(text: String) {
         output.append(text)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
+
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 }
