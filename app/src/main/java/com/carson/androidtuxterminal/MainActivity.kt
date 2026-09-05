@@ -135,15 +135,23 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val json = downloadText(pkgCatalogUrl)
-                runOnUiThread { if (listAfterFetch) showCatalog(json) else append("pkg: package catalog updated from GitHub.\n") }
-            } catch (e: Exception) { runOnUiThread { append("pkg: catalog error: ${e.message}\n") } }
+                runOnUiThread {
+                    if (listAfterFetch) showCatalog(json)
+                    else append("pkg: package catalog updated from GitHub.\n")
+                }
+            } catch (e: Exception) {
+                runOnUiThread { append("pkg: catalog error: ${e.message}\n") }
+            }
         }.start()
     }
 
     private fun showCatalog(json: String) {
         try {
             val packages = JSONArray(json)
-            if (packages.length() == 0) { append("pkg: catalog is empty.\n"); return }
+            if (packages.length() == 0) {
+                append("pkg: catalog is empty.\n")
+                return
+            }
             append(buildString {
                 append("Available packages:\n")
                 for (i in 0 until packages.length()) {
@@ -151,11 +159,16 @@ class MainActivity : AppCompatActivity() {
                     append("  ${item.optString("name")} - ${item.optString("description")}\n")
                 }
             })
-        } catch (e: Exception) { append("pkg: invalid catalog: ${e.message}\n") }
+        } catch (e: Exception) {
+            append("pkg: invalid catalog: ${e.message}\n")
+        }
     }
 
     private fun searchPackages(query: String) {
-        if (query.isBlank()) { append("Usage: pkg search <name or keyword>\n"); return }
+        if (query.isBlank()) {
+            append("Usage: pkg search <name or keyword>\n")
+            return
+        }
         Thread {
             try {
                 val packages = JSONArray(downloadText(pkgCatalogUrl))
@@ -167,29 +180,48 @@ class MainActivity : AppCompatActivity() {
                     val id = item.optString("package")
                     val description = item.optString("description")
                     val aliases = item.optJSONArray("aliases")
-                    val aliasText = buildString { if (aliases != null) for (j in 0 until aliases.length()) append(" ").append(aliases.optString(j)) }
+                    val aliasText = buildString {
+                        if (aliases != null) {
+                            for (j in 0 until aliases.length()) append(" ").append(aliases.optString(j))
+                        }
+                    }
                     if ("$name $id $description $aliasText".lowercase().contains(needle)) {
-                        matches += "  $name" + if (id.isNotBlank()) " [$id]" else "" + if (description.isNotBlank()) " - $description" else ""
+                        matches += "  $name" + if (id.isNotBlank()) " [$id]" else "" +
+                                if (description.isNotBlank()) " - $description" else ""
                     }
                 }
-                runOnUiThread { if (matches.isEmpty()) append("pkg: no packages found for '$query'.\n") else append("Search results for '$query':\n${matches.joinToString("\n")}\n") }
-            } catch (e: Exception) { runOnUiThread { append("pkg: search failed: ${e.message}\n") } }
+                runOnUiThread {
+                    if (matches.isEmpty()) append("pkg: no packages found for '$query'.\n")
+                    else append("Search results for '$query':\n${matches.joinToString("\n")}\n")
+                }
+            } catch (e: Exception) {
+                runOnUiThread { append("pkg: search failed: ${e.message}\n") }
+            }
         }.start()
     }
 
     private fun installPackage(target: String) {
-        if (target.isBlank()) { append("Usage: pkg install <package-name|package-id|https-url>\n"); return }
+        if (target.isBlank()) {
+            append("Usage: pkg install <package-name|package-id|https-url>\n")
+            return
+        }
         Thread {
             try {
-                val url = if (target.startsWith("https://", true)) target else resolvePackageUrl(target)
-                    ?: throw IllegalArgumentException("package '$target' was not found; try 'pkg search $target'")
+                val url = if (target.startsWith("https://", true)) {
+                    target
+                } else {
+                    resolvePackageUrl(target)
+                        ?: throw IllegalArgumentException("package '$target' was not found; try 'pkg search $target'")
+                }
                 runOnUiThread { append("pkg: resolving APK source...\n") }
                 val downloaded = downloadApkToRealStorage(url)
                 runOnUiThread {
                     append("pkg: APK saved to Android Downloads/storage.\n")
                     launchInstaller(downloaded)
                 }
-            } catch (e: Exception) { runOnUiThread { append("pkg: install failed: ${e.message}\n") } }
+            } catch (e: Exception) {
+                runOnUiThread { append("pkg: install failed: ${e.message}\n") }
+            }
         }.start()
     }
 
@@ -246,9 +278,13 @@ class MainActivity : AppCompatActivity() {
         while (keys.hasNext()) {
             val key = keys.next()
             val version = versions.optJSONObject(key) ?: continue
-            val code = version.optLong("manifest", Long.MIN_VALUE)
-            val realCode = if (code == Long.MIN_VALUE) key.toLongOrNull() ?: Long.MIN_VALUE else code
-            if (realCode > newestCode) { newestCode = realCode; newest = version }
+            val manifest = version.optJSONObject("manifest")
+            val versionCode = manifest?.optLong("versionCode", Long.MIN_VALUE) ?: Long.MIN_VALUE
+            val realCode = if (versionCode != Long.MIN_VALUE) versionCode else key.toLongOrNull() ?: Long.MIN_VALUE
+            if (realCode > newestCode) {
+                newestCode = realCode
+                newest = version
+            }
         }
         val file = newest?.optJSONObject("file") ?: return null
         val name = file.optString("name")
@@ -257,14 +293,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun downloadText(urlString: String): String {
         val connection = openHttpsConnection(urlString)
-        return connection.inputStream.bufferedReader().use { it.readText() }
+        return try {
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun downloadApkToRealStorage(urlString: String): Uri {
         val connection = openHttpsConnection(urlString)
         val contentLength = connection.contentLengthLong
-        if (contentLength > 100L * 1024L * 1024L) { connection.disconnect(); throw IllegalArgumentException("APK is larger than 100 MB") }
+        if (contentLength > 100L * 1024L * 1024L) {
+            connection.disconnect()
+            throw IllegalArgumentException("APK is larger than 100 MB")
+        }
         val fileName = "Android-Tux-${System.currentTimeMillis()}.apk"
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -274,22 +318,64 @@ class MainActivity : AppCompatActivity() {
             val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw IllegalStateException("could not create Downloads entry")
             try {
-                contentResolver.openOutputStream(uri)?.use { out -> connection.inputStream.use { it.copyTo(out) } }
-                    ?: throw IllegalStateException("could not open Downloads entry")
-                values.clear(); values.put(MediaStore.Downloads.IS_PENDING, 0)
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    connection.inputStream.use { it.copyTo(out) }
+                } ?: throw IllegalStateException("could not open Downloads entry")
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
                 contentResolver.update(uri, values, null, null)
                 connection.disconnect()
                 return uri
             } catch (e: Exception) {
-                contentResolver.delete(uri, null, null); connection.disconnect(); throw e
+                contentResolver.delete(uri, null, null)
+                connection.disconnect()
+                throw e
             }
         }
+
         val dir = getExternalFilesDir("Download") ?: cacheDir
         dir.mkdirs()
         val file = File(dir, fileName)
-        connection.inputStream.use { input -> file.outputStream().use { out -> input.copyTo(out) } }
-        connection.disconnect()
+        try {
+            connection.inputStream.use { input -> file.outputStream().use { out -> input.copyTo(out) } }
+        } finally {
+            connection.disconnect()
+        }
         return FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+    }
+
+    private fun openHttpsConnection(urlString: String): HttpURLConnection {
+        var currentUrl = urlString
+        repeat(5) {
+            val url = URL(currentUrl)
+            if (!url.protocol.equals("https", true)) {
+                throw IllegalArgumentException("only HTTPS URLs are allowed")
+            }
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 15_000
+                readTimeout = 30_000
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "Android-Tux-Terminal-pkg/0.5")
+                setRequestProperty("Accept", "application/json, application/vnd.android.package-archive, */*")
+            }
+            connection.connect()
+            when (connection.responseCode) {
+                in 200..299 -> return connection
+                in 300..399 -> {
+                    val location = connection.getHeaderField("Location")
+                    connection.disconnect()
+                    if (location.isNullOrBlank()) throw IllegalArgumentException("HTTPS redirect missing Location header")
+                    currentUrl = URL(url, location).toString()
+                }
+                else -> {
+                    val code = connection.responseCode
+                    connection.disconnect()
+                    throw IllegalArgumentException("HTTP $code")
+                }
+            }
+        }
+        throw IllegalArgumentException("too many HTTPS redirects")
     }
 
     private fun launchInstaller(uri: Uri) {
@@ -302,20 +388,34 @@ class MainActivity : AppCompatActivity() {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        try { startActivity(intent) } catch (e: Exception) { append("pkg: Android package installer unavailable: ${e.message}\n") }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            append("pkg: Android package installer unavailable: ${e.message}\n")
+        }
     }
 
     private fun showStorage() {
         val external = getExternalFilesDir(null)?.absolutePath ?: "unavailable"
-        val downloads = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "MediaStore Downloads (public Android storage)" else "$external/Download"
-        append("Android storage integration:\n  App files: $external\n  APK downloads: $downloads\n  Installer: Android system Package Installer\n")
+        val downloads = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            "MediaStore Downloads (public Android storage)"
+        } else {
+            "$external/Download"
+        }
+        append("Android storage integration:\n" +
+                "  App files: $external\n" +
+                "  APK downloads: $downloads\n" +
+                "  Installer: Android system Package Installer\n")
     }
 
     private fun changeDirectory(target: String) {
         val destination = if (target.isBlank() || target == "~") "/" else target
         executeShell("cd ${shellQuote(destination)} && pwd") { result ->
             val newPath = result.trim().lineSequence().lastOrNull()?.trim()
-            if (!newPath.isNullOrBlank() && newPath.startsWith("/")) { cwd = newPath; updatePrompt() }
+            if (!newPath.isNullOrBlank() && newPath.startsWith("/")) {
+                cwd = newPath
+                updatePrompt()
+            }
             append(result)
         }
     }
@@ -326,16 +426,38 @@ class MainActivity : AppCompatActivity() {
                 val fullCommand = "cd ${shellQuote(cwd)} && $command"
                 val process = ProcessBuilder("/system/bin/sh", "-c", fullCommand).redirectErrorStream(true).start()
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
-                val result = buildString { var line: String?; while (reader.readLine().also { line = it } != null) append(line).append('\n') }
+                val result = buildString {
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) append(line).append('\n')
+                }
                 process.waitFor()
                 runOnUiThread { if (callback != null) callback(result) else append(result) }
-            } catch (e: Exception) { runOnUiThread { append("Error: ${e.message}\n") } }
+            } catch (e: Exception) {
+                runOnUiThread { append("Error: ${e.message}\n") }
+            }
         }.start()
     }
 
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
-    private fun showPreviousCommand() { if (history.isEmpty()) return; historyIndex = (historyIndex - 1).coerceAtLeast(0); input.setText(history[historyIndex]); input.setSelection(input.text.length) }
-    private fun showNextCommand() { if (history.isEmpty()) return; historyIndex = (historyIndex + 1).coerceAtMost(history.size); input.setText(if (historyIndex == history.size) "" else history[historyIndex]); input.setSelection(input.text.length) }
+
+    private fun showPreviousCommand() {
+        if (history.isEmpty()) return
+        historyIndex = (historyIndex - 1).coerceAtLeast(0)
+        input.setText(history[historyIndex])
+        input.setSelection(input.text.length)
+    }
+
+    private fun showNextCommand() {
+        if (history.isEmpty()) return
+        historyIndex = (historyIndex + 1).coerceAtMost(history.size)
+        input.setText(if (historyIndex == history.size) "" else history[historyIndex])
+        input.setSelection(input.text.length)
+    }
+
     private fun updatePrompt() { input.hint = "$cwd $ " }
-    private fun append(text: String) { output.append(text); scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) } }
+
+    private fun append(text: String) {
+        output.append(text)
+        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
 }
