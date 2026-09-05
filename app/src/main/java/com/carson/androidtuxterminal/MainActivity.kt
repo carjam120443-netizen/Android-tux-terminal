@@ -49,7 +49,7 @@ class MainActivity : AppCompatActivity() {
             setHint("command")
             setTextSize(14f)
             typeface = android.graphics.Typeface.MONOSPACE
-            singleLine = true
+            setSingleLine(true)
             imeOptions = EditorInfo.IME_ACTION_GO
             setBackgroundColor(Color.TRANSPARENT)
             setPadding(0, 10, 0, 4)
