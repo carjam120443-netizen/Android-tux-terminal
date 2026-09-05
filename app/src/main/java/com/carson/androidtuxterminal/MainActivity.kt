@@ -53,7 +53,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             setTextSize(14f)
             typeface = android.graphics.Typeface.MONOSPACE
-            text = "Android Tux Terminal 0.5.0\n" +
+            text = "Android Tux Terminal 0.6.0\n" +
                     "Android shell • Linux-style terminal\n" +
                     "Real Android storage + package installation integration\n" +
                     "Type 'help' for built-in commands.\n\n"
@@ -114,12 +114,20 @@ class MainActivity : AppCompatActivity() {
             cmd.startsWith("pkg search ") -> searchPackages(cmd.removePrefix("pkg search ").trim())
             cmd.startsWith("pkg install ") -> installPackage(cmd.removePrefix("pkg install ").trim())
             cmd == "pkg storage" -> showStorage()
+            cmd == "pkg-get" || cmd == "pkg-get help" -> append(pkgGetHelp())
+            cmd == "pkg-get update" || cmd == "pkg-get list" -> fetchCatalog(cmd == "pkg-get list")
+            cmd == "pkg-get sources" || cmd == "pkg-get source" -> append("Package catalog:\n$pkgCatalogUrl\n\nSources: direct HTTPS APK, GitHub Releases, and F-Droid.\n")
+            cmd.startsWith("pkg-get search ") -> searchPackages(cmd.removePrefix("pkg-get search ").trim())
+            cmd.startsWith("pkg-get install ") -> installPackage(cmd.removePrefix("pkg-get install ").trim())
+            cmd.startsWith("pkg-get upgrade ") -> installPackage(cmd.removePrefix("pkg-get upgrade ").trim())
+            cmd == "pkg-get storage" -> showStorage()
+            cmd == "pkg-get upgrade" -> append("pkg-get: no package specified. Use 'pkg-get upgrade <name>' to reinstall the latest catalog APK.\n")
             else -> executeShell(cmd)
         }
     }
 
     private fun pkgHelp(): String =
-        "Android Tux pkg 0.5.0:\n" +
+        "Android Tux pkg 0.6.0:\n" +
         "  pkg help                 show package manager help\n" +
         "  pkg sources              show configured sources\n" +
         "  pkg update               download the latest package catalog\n" +
@@ -128,8 +136,21 @@ class MainActivity : AppCompatActivity() {
         "  pkg install <name>       install a catalog package\n" +
         "  pkg install <https-url>  install any HTTPS APK URL\n" +
         "  pkg storage              show Android app/download storage\n\n" +
+        "pkg-get is the apt-get-style alias for the same APK package manager.\n" +
         "Catalog entries support: url, source=github, repo, or source=fdroid.\n" +
         "Future apps can be added without changing the APK by updating packages.json.\n"
+
+    private fun pkgGetHelp(): String =
+        "Android Tux pkg-get 0.6.0 — apt-get-style APK manager:\n" +
+        "  pkg-get update             refresh the APK package catalog\n" +
+        "  pkg-get list               list available APK packages\n" +
+        "  pkg-get search <query>     search available packages\n" +
+        "  pkg-get install <name>     install a catalog APK\n" +
+        "  pkg-get upgrade <name>     reinstall the latest catalog APK\n" +
+        "  pkg-get sources            show APK sources\n" +
+        "  pkg-get storage            show Android storage integration\n" +
+        "\n" +
+        "pkg-get uses the same real Android Package Installer and Downloads storage as pkg.\n"
 
     private fun fetchCatalog(listAfterFetch: Boolean) {
         Thread {
@@ -356,7 +377,7 @@ class MainActivity : AppCompatActivity() {
                 connectTimeout = 15_000
                 readTimeout = 30_000
                 instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "Android-Tux-Terminal-pkg/0.5")
+                setRequestProperty("User-Agent", "Android-Tux-Terminal-pkg/0.6")
                 setRequestProperty("Accept", "application/json, application/vnd.android.package-archive, */*")
             }
             connection.connect()
