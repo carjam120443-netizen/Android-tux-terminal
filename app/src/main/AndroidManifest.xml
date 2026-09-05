@@ -3,6 +3,8 @@
     <application
         android:theme="@style/Theme.AndroidTuxTerminal"
         android:label="Android Tux Terminal"
+        android:icon="@drawable/tux_terminal_icon"
+        android:roundIcon="@drawable/tux_terminal_icon"
         android:allowBackup="true"
         android:supportsRtl="true">
         <activity
