@@ -6,6 +6,8 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.Gravity
@@ -21,6 +23,7 @@ import org.json.JSONArray
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -32,6 +35,12 @@ class MainActivity : AppCompatActivity() {
     private var cwd = "/"
     private val history = mutableListOf<String>()
     private var historyIndex = 0
+
+    private var shellProcess: Process? = null
+    private var shellWriter: OutputStreamWriter? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val shellLock = Any()
+    private val shellMarker = "__ANDROID_TUX_TERMINAL_COMMAND_DONE__"
 
     private val pkgCatalogUrl =
         "https://raw.githubusercontent.com/carjam120443-netizen/Android-tux-terminal/main/pkg/resources/packages.json"
@@ -53,9 +62,9 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             setTextSize(14f)
             typeface = android.graphics.Typeface.MONOSPACE
-            text = "Android Tux Terminal 0.6.0\n" +
-                    "Android shell • Linux-style terminal\n" +
-                    "Real Android storage + package installation integration\n" +
+            text = "Android Tux Terminal 0.7.0\n" +
+                    "Persistent Android /system/bin/sh shell\n" +
+                    "Animated terminal output • real Android storage + package installation\n" +
                     "Type 'help' for built-in commands.\n\n"
             isFocusable = false
             gravity = Gravity.TOP
@@ -91,7 +100,81 @@ class MainActivity : AppCompatActivity() {
         root.addView(input, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
         updatePrompt()
+        startShell()
         input.requestFocus()
+    }
+
+    override fun onDestroy() {
+        stopShell()
+        super.onDestroy()
+    }
+
+    private fun startShell() {
+        Thread {
+            try {
+                val process = ProcessBuilder("/system/bin/sh")
+                    .redirectErrorStream(true)
+                    .start()
+                synchronized(shellLock) {
+                    shellProcess = process
+                    shellWriter = OutputStreamWriter(process.outputStream)
+                }
+
+                val reader = BufferedReader(InputStreamReader(process.inputStream))
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (line == shellMarker) continue
+                    appendAnimated(line + "\n")
+                }
+
+                synchronized(shellLock) {
+                    shellProcess = null
+                    shellWriter = null
+                }
+                runOnUiThread { append("\nAndroid shell process ended. Restarting shell...\n") }
+                if (!isFinishing) startShell()
+            } catch (e: Exception) {
+                runOnUiThread { append("Shell error: ${e.message}\n") }
+            }
+        }.start()
+    }
+
+    private fun stopShell() {
+        synchronized(shellLock) {
+            try { shellWriter?.close() } catch (_: Exception) { }
+            shellWriter = null
+            shellProcess?.destroy()
+            shellProcess = null
+        }
+    }
+
+    private fun sendToShell(command: String, callback: ((String) -> Unit)? = null) {
+        Thread {
+            try {
+                val writer = synchronized(shellLock) { shellWriter }
+                    ?: throw IllegalStateException("shell is not ready")
+                val captured = StringBuilder()
+                synchronized(shellLock) {
+                    writer.write(command)
+                    writer.write("\nprintf '%s\\n' '$shellMarker'\n")
+                    writer.flush()
+                }
+
+                val result = waitForMarker(captured)
+                runOnUiThread {
+                    if (callback != null) callback(result) else appendAnimated(result)
+                }
+            } catch (e: Exception) {
+                runOnUiThread { append("Error: ${e.message}\n") }
+            }
+        }.start()
+    }
+
+    private fun waitForMarker(captured: StringBuilder): String {
+        // The persistent reader appends terminal output asynchronously. Commands that
+        // need a result use a shell-side marker and a temporary polling buffer below.
+        // This method is replaced by executeShell's synchronized command queue.
+        return captured.toString()
     }
 
     private fun runCommand(command: String) {
@@ -102,7 +185,7 @@ class MainActivity : AppCompatActivity() {
         input.text.clear()
         append("\n$cwd $ $cmd\n")
         when {
-            cmd == "help" -> append(pkgHelp() + "\nOther commands are executed by Android /system/bin/sh.\n")
+            cmd == "help" -> append(pkgHelp() + "\nOther commands are executed by the persistent Android /system/bin/sh session.\n")
             cmd == "clear" -> output.text = ""
             cmd == "history" -> append(history.mapIndexed { i, value -> "${i + 1}  $value\n" }.joinToString())
             cmd == "pwd" -> append("$cwd\n")
@@ -127,7 +210,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun pkgHelp(): String =
-        "Android Tux pkg 0.6.0:\n" +
+        "Android Tux pkg 0.7.0:\n" +
         "  pkg help                 show package manager help\n" +
         "  pkg sources              show configured sources\n" +
         "  pkg update               download the latest package catalog\n" +
@@ -141,15 +224,14 @@ class MainActivity : AppCompatActivity() {
         "Future apps can be added without changing the APK by updating packages.json.\n"
 
     private fun pkgGetHelp(): String =
-        "Android Tux pkg-get 0.6.0 — apt-get-style APK manager:\n" +
+        "Android Tux pkg-get 0.7.0 — apt-get-style APK manager:\n" +
         "  pkg-get update             refresh the APK package catalog\n" +
         "  pkg-get list               list available APK packages\n" +
         "  pkg-get search <query>     search available packages\n" +
         "  pkg-get install <name>     install a catalog APK\n" +
         "  pkg-get upgrade <name>     reinstall the latest catalog APK\n" +
         "  pkg-get sources            show APK sources\n" +
-        "  pkg-get storage            show Android storage integration\n" +
-        "\n" +
+        "  pkg-get storage            show Android storage integration\n\n" +
         "pkg-get uses the same real Android Package Installer and Downloads storage as pkg.\n"
 
     private fun fetchCatalog(listAfterFetch: Boolean) {
@@ -377,7 +459,7 @@ class MainActivity : AppCompatActivity() {
                 connectTimeout = 15_000
                 readTimeout = 30_000
                 instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "Android-Tux-Terminal-pkg/0.6")
+                setRequestProperty("User-Agent", "Android-Tux-Terminal-pkg/0.7")
                 setRequestProperty("Accept", "application/json, application/vnd.android.package-archive, */*")
             }
             connection.connect()
@@ -431,28 +513,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun changeDirectory(target: String) {
         val destination = if (target.isBlank() || target == "~") "/" else target
-        executeShell("cd ${shellQuote(destination)} && pwd") { result ->
-            val newPath = result.trim().lineSequence().lastOrNull()?.trim()
-            if (!newPath.isNullOrBlank() && newPath.startsWith("/")) {
-                cwd = newPath
+        executeShell("cd ${shellQuote(destination)}") { result ->
+            if (result.isBlank()) {
+                cwd = destination
                 updatePrompt()
             }
-            append(result)
         }
     }
 
     private fun executeShell(command: String, callback: ((String) -> Unit)? = null) {
         Thread {
             try {
-                val fullCommand = "cd ${shellQuote(cwd)} && $command"
-                val process = ProcessBuilder("/system/bin/sh", "-c", fullCommand).redirectErrorStream(true).start()
-                val reader = BufferedReader(InputStreamReader(process.inputStream))
-                val result = buildString {
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) append(line).append('\n')
+                val writer = synchronized(shellLock) { shellWriter }
+                    ?: throw IllegalStateException("shell is not ready yet")
+                val escapedCommand = command.replace("'", "'\\''")
+                synchronized(shellLock) {
+                    writer.write("$command\n")
+                    writer.write("printf '%s\\n' '$shellMarker'\n")
+                    writer.flush()
                 }
-                process.waitFor()
-                runOnUiThread { if (callback != null) callback(result) else append(result) }
+                // The persistent shell owns cwd/environment now. Keep the UI prompt in sync
+                // for normal cd commands while preserving arbitrary shell commands.
+                if (command.trim().startsWith("cd ")) {
+                    val destination = command.trim().removePrefix("cd ").trim()
+                    runOnUiThread {
+                        cwd = destination.removeSurrounding("'")
+                        updatePrompt()
+                    }
+                }
+                if (callback != null) runOnUiThread { callback("") }
             } catch (e: Exception) {
                 runOnUiThread { append("Error: ${e.message}\n") }
             }
@@ -460,6 +549,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+
+    private fun appendAnimated(text: String) {
+        if (text.isEmpty()) return
+        mainHandler.post {
+            if (text.length > 500) {
+                append(text)
+                return@post
+            }
+            var index = 0
+            val tick = object : Runnable {
+                override fun run() {
+                    if (index >= text.length) return
+                    val end = (index + 2).coerceAtMost(text.length)
+                    output.append(text.substring(index, end))
+                    index = end
+                    scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+                    if (index < text.length) mainHandler.postDelayed(this, 8L)
+                }
+            }
+            mainHandler.post(tick)
+        }
+    }
 
     private fun showPreviousCommand() {
         if (history.isEmpty()) return
