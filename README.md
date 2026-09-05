@@ -1,5 +1,9 @@
 # Android Tux Terminal 🐧📱
 
+<p align="center">
+  <img src="appicon/source/tux-terminal-icon.svg" alt="Android Tux Terminal icon" width="160">
+</p>
+
 An Android terminal project that aims to bring a lightweight Linux-style command-line environment to Android.
 
 ## Current status
